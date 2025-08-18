@@ -129,3 +129,23 @@ button:focus-visible {
 }
 .npc-name{ font-weight:700; margin-bottom:4px; }
 .npc-line{ font-size:14px; }
+
+.ui-panel{
+  position: fixed; right: 16px; top: 16px; z-index: 12;
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.ui-panel button{
+  background: #ffffff; color: #111; border: none;
+  border-radius: 10px; padding: 8px 12px; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0,0,0,.15);
+}
+.ui-panel button:hover{ filter: brightness(0.95); }
+
+.toast{
+  position: fixed; left:50%; bottom: 28px; transform: translateX(-50%);
+  background: rgba(0,0,0,.82); color:#fff; padding:8px 12px;
+  border-radius: 10px; opacity:0; transition: opacity .2s ease;
+  pointer-events:none; z-index: 20;
+}
+.toast.show{ opacity:1; }
+
