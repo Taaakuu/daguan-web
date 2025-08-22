@@ -6,6 +6,9 @@ export default function App() {
   const mountRef = useRef(null);
   // 【添加】把副作用里的动作暴露给 JSX 按钮调用
   const actionsRef = useRef({ save: null, restore:null, reset:null });
+  // 【添加】简单的状态容器：引导剧情步数（不触发 React 重渲染）
+  const stateRef = useRef({ questStep: 0 });
+
 
   useEffect(() => {
     // 基础三件套
@@ -50,9 +53,65 @@ export default function App() {
     grid.position.y = 0.01; // 避免Z-fighting
     scene.add(grid);
 
+    // 【替换】Day3起：NPC 改为从 /public/npcs.json 加载
+    let NPC_DATA = []; // 将在 loadNPCs() 里赋值
+
+
+    // 【添加】异步加载 NPC 数据并实例化
+    async function loadNPCs() {
+      // 1) 拉 JSON
+      const url = `${import.meta.env.BASE_URL}npcs.json`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`fetch ${url} failed: ${res.status}`);
+      NPC_DATA = await res.json();
+
+      // 2) 用 JSON 创建 NPC
+      NPC_DATA.forEach(({ name, pos, color, lines }) => {
+        makeNPC(name, pos[0], pos[1], color, lines, savedByName);
+       });
+      }
+      loadNPCs().catch((e) => {
+        console.error("[loadNPCs] failed", e);
+        const fallback = [
+          { name: "贾宝玉", color: 0xffc0cb, pos: [-3, 0], lines: ["好妹妹，我才不读仕途经济呢", "清风明月，且与我同游。"] },
+          { name: "林黛玉", color: 0xc0a0ff, pos: [ 0, 0], lines: ["早知他来，我便不来了", "花谢花飞花满天，你可会作诗？"] },
+          { name: "薛宝钗", color: 0xffe08a, pos: [ 3, 0], lines: ["好风凭接力，送我上青云", "稳字当头，事事有度。"] },
+        ];
+        fallback.forEach(({ name, pos, color, lines }) =>
+          makeNPC(name, pos[0], pos[1], color, lines, null)
+        );
+      });
+
+      // 立柱
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.06, 1.2, 12),
+        new THREE.MeshLambertMaterial({ color: 0x8B5A2B })
+      );
+      pole.position.set(0, 0.6, -4);
+      scene.add(pole);  
+
+      // 木牌面
+      const sign = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.6, 0.08),
+        new THREE.MeshLambertMaterial({ color: 0xA0522D })
+      );
+      sign.position.set(0, 1.1, -4);
+      scene.add(sign);
+
+      // 供点击拾取的“marker”就用牌面
+      const marker = sign;
+
+      // 路标标签（复用 .npc-label 样式）
+      const markerLabel = document.createElement("div");
+      markerLabel.className = "npc-label";
+      markerLabel.innerHTML = `<div class="npc-name">引导路标</div><div class="npc-line">点击我，开始迎宾台词 🌸</div>`;
+      document.body.appendChild(markerLabel);
+
+
     // ===== NPC 占位柱 =====
     const npcs = [];
-    function makeNPC(name, x, z, color, lines) {
+    // 替换】多一个 savedByName 参数（可为 null）
+    function makeNPC(name, x, z, color, lines, savedByName) {
       const mesh = new THREE.Mesh(
         new THREE.CylinderGeometry(0.4, 0.4, 1.2, 24),
         new THREE.MeshLambertMaterial({ color })
@@ -76,27 +135,6 @@ export default function App() {
       return data;
     }
 
-    // Day 1 数据（保留）
-    const NPC_DATA = [
-      {
-        name: "贾宝玉",
-        pos: [-3, 0],
-        color: 0xffc0cb,
-        lines: ["好妹妹，我才不读仕途经济呢"],
-      },
-      {
-        name: "林黛玉",
-        pos: [0, 0],
-        color: 0xc0a0ff,
-        lines: ["早知他来，我便不来了"],
-      },
-      {
-        name: "薛宝钗",
-        pos: [3, 0],
-        color: 0xffe08a,
-        lines: ["好风凭接力，送我上青云"],
-      },
-    ];
 
     // 从 localStorage 读取保存的布局 （按 name 匹配）
     const savedRaw = localStorage.getItem("daguan:npcLayout");
@@ -114,7 +152,6 @@ export default function App() {
       }
     } catch{}
 
-    NPC_DATA.forEach(({ name, pos, color, lines }) => makeNPC(name, pos[0], pos[1], color, lines));
 
     // ===== 标签位置投影（把3D位置转换为屏幕像素） =====
     const proj = new THREE.Vector3();
@@ -130,6 +167,17 @@ export default function App() {
         // 在视野外时隐藏
         label.style.display = proj.z < 1 && proj.z > -1 ? "block" : "none";
       });
+      // 【新增】再更新路标标签
+      if (marker) {
+        const { width, height } = canvas.getBoundingClientRect();
+        const v = new THREE.Vector3(marker.position.x, marker.position.y + 0.8, marker.position.z);
+        v.project(camera);
+        const x = (v.x * 0.5 + 0.5) * width;
+        const y = (-v.y * 0.5 + 0.5) * height;
+        markerLabel.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
+        // 在视野外时隐藏
+        markerLabel.style.display = v.z < 1 && v.z > -1 ? "block" : "none";
+      }
     }
 
     // ===== 台词自动轮换（每 4 秒切换一次） =====
@@ -168,15 +216,41 @@ export default function App() {
       if (!hit) return null;
       return npcs.find((n) => n.mesh === hit.object) || null;
     }
+    // 【添加】检测是否点击到了路标
+    function pickMarker(e) {
+      setMouse(e);
+      raycaster.setFromCamera(mouseNDC, camera);
+      const hit = raycaster.intersectObject(marker, false)[0];
+      return !!hit;
+    }
+
 
     function onPointerDown(e) {
+      // 【新增】先判断是否点击到路标
+      if (pickMarker(e)) {
+        stateRef.current.questStep++;
+        const introLines = [
+          "欢迎来到大观园。这里的一草一木都在等待你的安排。",
+          "你可以拖动三位 NPC，也可以按 WASD 漫游四处看看。",
+          "接下来，我会引导你走向第一处景观……（明日继续）"
+        ];
+        const idx = Math.min(stateRef.current.questStep - 1, introLines.length - 1);
+
+        // 把这句引导词显示到所有 NPC 的对话框
+        npcs.forEach(n => {
+          n.label.querySelector(".npc-line").textContent = introLines[idx];
+        });
+
+        toast("迎宾剧情 · 第 " + stateRef.current.questStep + " 步");
+        return; // 阻止继续进入 NPC 拖拽逻辑
+      }
+
       const n = pickNPC(e);
       if (!n) return;
       picked = n;
       dragging = true;
       controls.enabled = false;
       canvas.style.cursor = "grabbing";
-      canvas.style.cursor = "default";
     }
 
     function onPointerMove(e) {
@@ -192,7 +266,7 @@ export default function App() {
       dragging = false;
       picked = null;
       controls.enabled = true;
-      renderer.domElement.style.cursor = "default";
+      canvas.style.cursor = "default";
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -295,17 +369,6 @@ export default function App() {
       toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1400);
     }
 
-    // 绑定右上角按钮（React 外挂法，简单直观）
-    document
-      .getElementById("save")
-      ?.addEventListener("click", () => saveLayout());
-    document
-      .getElementById("restore")
-      ?.addEventListener("click", () => restoreLayout());
-    document
-      .getElementById("reset")
-      ?.addEventListener("click", () => resetLayout());
-
 
     // 自适应
     const onResize = () => {
@@ -344,6 +407,8 @@ export default function App() {
       canvas.parentNode?.removeChild(canvas);
       npcs.forEach(({ label }) => label.remove());
       toastEl.remove();
+      // 移除路标标签
+      markerLabel.remove();
     };
   }, []);
 
