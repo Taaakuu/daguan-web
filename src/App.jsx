@@ -5,7 +5,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 export default function App() {
   const mountRef = useRef(null);
   // 【添加】把副作用里的动作暴露给 JSX 按钮调用
-  const actionsRef = useRef({ save: null, restore:null, reset:null });
+  const actionsRef = useRef({ save: null, restore: null, reset: null });
   // 【添加】简单的状态容器：引导剧情步数（不触发 React 重渲染）
   const stateRef = useRef({ questStep: 0 });
 
@@ -49,12 +49,45 @@ export default function App() {
     scene.add(ground);
 
     // 网格辅助（便于定位）
-    const grid =new THREE.GridHelper(120, 120, 0x444444, 0x888888);
+    const grid = new THREE.GridHelper(120, 120, 0x444444, 0x888888);
     grid.position.y = 0.01; // 避免Z-fighting
     scene.add(grid);
 
     // 【替换】Day3起：NPC 改为从 /public/npcs.json 加载
     let NPC_DATA = []; // 将在 loadNPCs() 里赋值
+    const STORAGE_KEY = "daguan:npcLayout";
+
+    function readSavedLayout() {
+      const savedRaw = localStorage.getItem(STORAGE_KEY);
+      if (!savedRaw) return { entries: null, reason: "empty" };
+      try {
+        const arr = JSON.parse(savedRaw);
+        if (!Array.isArray(arr)) throw new Error("not an array");
+        const byName = new Map();
+        arr.forEach((p) => {
+          if (p && typeof p.name === "string" && typeof p.x === "number" && typeof p.z === "number") {
+            byName.set(p.name, { name: p.name, x: p.x, z: p.z });
+          }
+        });
+        if (!byName.size) {
+          localStorage.removeItem(STORAGE_KEY);
+          return { entries: null, reason: "corrupt" };
+        }
+        return { entries: Array.from(byName.values()), reason: null };
+      } catch (err) {
+        console.warn("[layout] failed to parse saved layout", err);
+        localStorage.removeItem(STORAGE_KEY);
+        return { entries: null, reason: "corrupt" };
+      }
+    }
+
+    const savedLayout = readSavedLayout();
+    const savedByName = savedLayout.entries
+      ? savedLayout.entries.reduce((acc, p) => {
+          acc[p.name] = { x: p.x, z: p.z };
+          return acc;
+        }, {})
+      : null;
 
 
     // 【添加】异步加载 NPC 数据并实例化
@@ -68,58 +101,63 @@ export default function App() {
       // 2) 用 JSON 创建 NPC
       NPC_DATA.forEach(({ name, pos, color, lines }) => {
         makeNPC(name, pos[0], pos[1], color, lines, savedByName);
-       });
-      }
-      loadNPCs().catch((e) => {
-        console.error("[loadNPCs] failed", e);
-        const fallback = [
-          { name: "贾宝玉", color: 0xffc0cb, pos: [-3, 0], lines: ["好妹妹，我才不读仕途经济呢", "清风明月，且与我同游。"] },
-          { name: "林黛玉", color: 0xc0a0ff, pos: [ 0, 0], lines: ["早知他来，我便不来了", "花谢花飞花满天，你可会作诗？"] },
-          { name: "薛宝钗", color: 0xffe08a, pos: [ 3, 0], lines: ["好风凭接力，送我上青云", "稳字当头，事事有度。"] },
-        ];
-        fallback.forEach(({ name, pos, color, lines }) =>
-          makeNPC(name, pos[0], pos[1], color, lines, null)
-        );
       });
-
-      // 立柱
-      const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.06, 1.2, 12),
-        new THREE.MeshLambertMaterial({ color: 0x8B5A2B })
+    }
+    loadNPCs().catch((e) => {
+      console.error("[loadNPCs] failed", e);
+      const fallback = [
+        { name: "贾宝玉", color: 0xffc0cb, pos: [-3, 0], lines: ["好妹妹，我才不读仕途经济呢", "清风明月，且与我同游。"] },
+        { name: "林黛玉", color: 0xc0a0ff, pos: [ 0, 0], lines: ["早知他来，我便不来了", "花谢花飞花满天，你可会作诗？"] },
+        { name: "薛宝钗", color: 0xffe08a, pos: [ 3, 0], lines: ["好风凭接力，送我上青云", "稳字当头，事事有度。"] },
+      ];
+      NPC_DATA = fallback;
+      fallback.forEach(({ name, pos, color, lines }) =>
+        makeNPC(name, pos[0], pos[1], color, lines, savedByName)
       );
-      pole.position.set(0, 0.6, -4);
-      scene.add(pole);  
+    });
 
-      // 木牌面
-      const sign = new THREE.Mesh(
-        new THREE.BoxGeometry(1.2, 0.6, 0.08),
-        new THREE.MeshLambertMaterial({ color: 0xA0522D })
-      );
-      sign.position.set(0, 1.1, -4);
-      scene.add(sign);
+    // 立柱
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.06, 1.2, 12),
+      new THREE.MeshLambertMaterial({ color: 0x8B5A2B })
+    );
+    pole.position.set(0, 0.6, -4);
+    scene.add(pole);
 
-      // 供点击拾取的“marker”就用牌面
-      const marker = sign;
+    // 木牌面
+    const sign = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.6, 0.08),
+      new THREE.MeshLambertMaterial({ color: 0xA0522D })
+    );
+    sign.position.set(0, 1.1, -4);
+    scene.add(sign);
 
-      // 路标标签（复用 .npc-label 样式）
-      const markerLabel = document.createElement("div");
-      markerLabel.className = "npc-label";
-      markerLabel.innerHTML = `<div class="npc-name">引导路标</div><div class="npc-line">点击我，开始迎宾台词 🌸</div>`;
-      document.body.appendChild(markerLabel);
+    // 供点击拾取的“marker”就用牌面
+    const marker = sign;
+
+    // 路标标签（复用 .npc-label 样式）
+    const markerLabel = document.createElement("div");
+    markerLabel.className = "npc-label";
+    markerLabel.innerHTML = `<div class="npc-name">引导路标</div><div class="npc-line">点击我，开始迎宾台词 🌸</div>`;
+    document.body.appendChild(markerLabel);
 
 
     // ===== NPC 占位柱 =====
     const npcs = [];
-    // 替换】多一个 savedByName 参数（可为 null）
+    // 【替换】多一个 savedByName 参数（可为 null）
     function makeNPC(name, x, z, color, lines, savedByName) {
+      const geometry = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 24);
       const mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.4, 0.4, 1.2, 24),
+        geometry,
         new THREE.MeshLambertMaterial({ color })
       );
 
       // 如果有保存的坐标，用保存的；否则用默认
       const saved = savedByName?.[name];
-      mesh.position.set(saved ? saved.x : x, 0.6, saved ? saved.z : z);
+      const halfHeight = geometry.parameters.height / 2;
+      mesh.position.set(saved ? saved.x : x, halfHeight, saved ? saved.z : z);
+      mesh.userData.halfHeight = halfHeight;
+      mesh.userData.labelOffset = halfHeight + 0.02;
       mesh.userData.npc = name;
       scene.add(mesh);
 
@@ -136,30 +174,13 @@ export default function App() {
     }
 
 
-    // 从 localStorage 读取保存的布局 （按 name 匹配）
-    const savedRaw = localStorage.getItem("daguan:npcLayout");
-    /** @type {Record<string,{x:number, z:number}>|null} */
-    let savedByName = null;
-    try{
-      const arr = savedRaw ? JSON.parse(savedRaw) : null;
-      if (Array.isArray(arr)) {
-        savedByName = {};
-        arr.forEach((p) => {
-          if (p.name && typeof p.x === "number" && typeof p.z === "number") {
-            savedByName[p.name] = { x: p.x, z: p.z };
-          }
-        });
-      }
-    } catch{}
-
-
     // ===== 标签位置投影（把3D位置转换为屏幕像素） =====
     const proj = new THREE.Vector3();
     function updateLabels() {
       const { width, height } = canvas.getBoundingClientRect();
       npcs.forEach(({ mesh, label }) => {
         proj.copy(mesh.position);
-        proj.y += 1.1; // 标签悬浮到柱子上方一点
+        proj.y += mesh.userData.labelOffset ?? 0.62; // 贴合柱子顶部，略微抬高避免穿插
         proj.project(camera);
         const x = (proj.x * 0.5 + 0.5) * width;
         const y = (-proj.y * 0.5 + 0.5) * height;
@@ -258,7 +279,8 @@ export default function App() {
       setMouse(e);
       const p = intersectGround();
       if (p) {
-        picked.mesh.position.set(p.x, 0.6, p.z);
+        const halfHeight = picked.mesh.userData.halfHeight ?? 0.6;
+        picked.mesh.position.set(p.x, halfHeight, p.z);
       }
     }
 
@@ -275,7 +297,7 @@ export default function App() {
     canvas.addEventListener("pointerleave", onPointerUp);
 
     // ===== WSSD 键盘漫游（沿地面平移相机）=====
-    const keys = { w: false, a:false, s:false, d:false };
+    const keys = { w: false, a: false, s: false, d: false };
     const speed = 0.12; //调整移动速度
 
     const onKeyDown = (e) => {
@@ -323,34 +345,35 @@ export default function App() {
         x: n.mesh.position.x,
         z: n.mesh.position.z,
       }));
-      localStorage.setItem("daguan:npcLayout", JSON.stringify(data));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       toast("布局已保存");
     }
 
     function restoreLayout() {
-      const raw = localStorage.getItem("daguan:npcLayout");
-      if (!raw) return toast("还没有保存的布局");
-      try{
-        const arr = JSON.parse(raw);
-        if (!Array.isArray(arr)) return toast("布局数据损坏");
-        // 以 name 对齐
-        const byName = {};
-        arr.forEach((p) => (byName[p.name] = p));
-        npcs.forEach((n) => {
-          const p = byName[n.name];
-          if (p && typeof p.x === "number" && typeof p.z === "number") {
-            n.mesh.position.set(p.x, 0.6, p.z);
-          }
-        });
-        toast("布局已恢复");
-      } catch {
-        toast("布局数据损坏");
+      const { entries, reason } = readSavedLayout();
+      if (!entries) {
+        toast(reason === "corrupt" ? "布局数据损坏，已清除" : "还没有保存的布局");
+        return;
       }
+      const byName = entries.reduce((acc, p) => {
+        acc[p.name] = p;
+        return acc;
+      }, {});
+      npcs.forEach((n) => {
+        const p = byName[n.name];
+        if (p) {
+          const halfHeight = n.mesh.userData.halfHeight ?? 0.6;
+          n.mesh.position.set(p.x, halfHeight, p.z);
+        }
+      });
+      toast("布局已恢复");
     }
 
     function resetLayout() {
       NPC_DATA.forEach((d, i) => {
-        npcs[i].mesh.position.set(d.pos[0], 0.6, d.pos[1]);
+        const mesh = npcs[i].mesh;
+        const halfHeight = mesh.userData.halfHeight ?? 0.6;
+        mesh.position.set(d.pos[0], halfHeight, d.pos[1]);
       });
       toast("已重置为默认布局");
     }
