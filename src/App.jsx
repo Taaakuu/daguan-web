@@ -155,49 +155,47 @@ export default function App() {
       // 2) 用 JSON 创建 NPC
       NPC_DATA.forEach(({ name, pos, color, lines }) => {
         makeNPC(name, pos[0], pos[1], color, lines, savedByName);
-       });
-      }
-      // 拉取NPC；失败则兜底（避免白屏）
-      loadNPCs().catch((e) => {
-        console.error("[loadNPCs] failed", e);
-        const fallback = [
-          { name: "贾宝玉", color: 0xffc0cb, pos: [-3, 0], lines: ["好妹妹，我才不读仕途经济呢", "清风明月，且与我同游。"] },
-          { name: "林黛玉", color: 0xc0a0ff, pos: [ 0, 0], lines: ["早知他来，我便不来了", "花谢花飞花满天，你可会作诗？"] },
-          { name: "薛宝钗", color: 0xffe08a, pos: [ 3, 0], lines: ["好风凭接力，送我上青云", "稳字当头，事事有度。"] },
-        ];
-        fallback.forEach(({ name, pos, color, lines }) =>
-          makeNPC(name, pos[0], pos[1], color, lines, null)
-        );
+       
       });
-
-      loadNPCs().then(() => {
-        updateLabels();
-      }).catch(console.error);
-
+    }
+    loadNPCs().catch((e) => {
+      console.error("[loadNPCs] failed", e);
+      const fallback = [
+        { name: "贾宝玉", color: 0xffc0cb, pos: [-3, 0], lines: ["好妹妹，我才不读仕途经济呢", "清风明月，且与我同游。"] },
+        { name: "林黛玉", color: 0xc0a0ff, pos: [ 0, 0], lines: ["早知他来，我便不来了", "花谢花飞花满天，你可会作诗？"] },
+        { name: "薛宝钗", color: 0xffe08a, pos: [ 3, 0], lines: ["好风凭接力，送我上青云", "稳字当头，事事有度。"] },
+      ];
+      NPC_DATA = fallback;
+      fallback.forEach(({ name, pos, color, lines }) =>
+        makeNPC(name, pos[0], pos[1], color, lines, savedByName)
+      );
+    });
+     
       // 立柱
-      const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.06, 1.2, 12),
-        new THREE.MeshLambertMaterial({ color: 0x8B5A2B })
-      );
-      pole.position.set(0, 0.6, -4);
-      scene.add(pole);  
+    const pole = new THREE.Mesh(
+     new THREE.CylinderGeometry(0.06, 0.06, 1.2, 12),
+     new THREE.MeshLambertMaterial({ color: 0x8B5A2B })
+    );
+    pole.position.set(0, 0.6, -4);
+    scene.add(pole);
 
-      // 木牌面
-      const sign = new THREE.Mesh(
-        new THREE.BoxGeometry(1.2, 0.6, 0.08),
-        new THREE.MeshLambertMaterial({ color: 0xA0522D })
-      );
-      sign.position.set(0, 1.1, -4);
-      scene.add(sign);
+     // 木牌面
+    const sign = new THREE.Mesh(
+     new THREE.BoxGeometry(1.2, 0.6, 0.08),
+     new THREE.MeshLambertMaterial({ color: 0xA0522D })
+    );
+    sign.position.set(0, 1.1, -4);
+    scene.add(sign);
 
-      // 供点击拾取的“marker”就用牌面
-      const marker = sign;
+    // 供点击拾取的“marker”就用牌面
+    const marker = sign;
 
-      // 路标标签（复用 .npc-label 样式）
-      const markerLabel = document.createElement("div");
-      markerLabel.className = "npc-label";
-      markerLabel.innerHTML = `<div class="npc-name">引导路标</div><div class="npc-line">点击我，开始迎宾台词 🌸</div>`;
-      document.body.appendChild(markerLabel);
+     
+    // 路标标签（复用 .npc-label 样式）
+    const markerLabel = document.createElement("div");
+    markerLabel.className = "npc-label";
+    markerLabel.innerHTML = `<div class="npc-name">引导路标</div><div class="npc-line">点击我，开始迎宾台词 🌸</div>`;
+    document.body.appendChild(markerLabel);
 
 
 
@@ -326,7 +324,7 @@ export default function App() {
     canvas.addEventListener("pointerleave", onPointerUp);
 
     // ===== WSSD 键盘漫游（沿地面平移相机）=====
-    const keys = { w: false, a:false, s:false, d:false };
+    const keys = { w: false, a: false, s: false, d: false };
     const speed = 0.12; //调整移动速度
 
     const onKeyDown = (e) => {
@@ -376,29 +374,27 @@ export default function App() {
         x: n.mesh.position.x,
         z: n.mesh.position.z,
       }));
-      localStorage.setItem("daguan:npcLayout", JSON.stringify(data));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       toast("布局已保存");
     }
 
     function restoreLayout() {
-      const raw = localStorage.getItem("daguan:npcLayout");
-      if (!raw) return toast("还没有保存的布局");
-      try{
-        const arr = JSON.parse(raw);
-        if (!Array.isArray(arr)) return toast("布局数据损坏");
-        // 以 name 对齐
-        const byName = {};
-        arr.forEach((p) => (byName[p.name] = p));
-        npcs.forEach((n) => {
-          const p = byName[n.name];
-          if (p && typeof p.x === "number" && typeof p.z === "number") {
-            n.mesh.position.set(p.x, 0.6, p.z);
-          }
-        });
-        toast("布局已恢复");
-      } catch {
-        toast("布局数据损坏");
+      const { entries, reason } = readSavedLayout();
+      if (!entries) {
+        toast(reason === "corrupt" ? "布局数据损坏，已清除" : "还没有保存的布局");
+        return;
       }
+      const byName = entries.reduce((acc, p) => {
+        acc[p.name] = p;
+        return acc;
+      }, {});
+      npcs.forEach((n) => {
+        const p = byName[n.name];
+        if (p) {
+          n.mesh.position.set(p.x, 0.6, p.z);
+        }
+      });
+      toast("布局已恢复");
     }
 
     function resetLayout() {
