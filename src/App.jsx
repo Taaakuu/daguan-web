@@ -4,9 +4,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 export default function App() {
   const mountRef = useRef(null);
-  // 【添加】把副作用里的动作暴露给 JSX 按钮调用
-  const actionsRef = useRef({ save: null, restore:null, reset:null });
-  // 【添加】简单的状态容器：引导剧情步数（不触发 React 重渲染）
+  // 把副作用里的动作暴露给 JSX 按钮调用
+  const actionsRef = useRef({ save: null, restore: null, reset: null });
+  // 简单的状态容器：引导剧情步数（不触发 React 重渲染）
   const stateRef = useRef({ questStep: 0 });
 
 
@@ -19,10 +19,12 @@ export default function App() {
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 5, 10);
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     (mountRef.current || document.body).appendChild(renderer.domElement);
-    // 【添加】让 canvas 可聚焦并自动获取焦点（WASD 需要）
+
+    // 让 canvas 可聚焦并自动获取焦点（WASD 需要）
     const canvas = renderer.domElement;
     canvas.setAttribute("tabindex", "0"); // 允许接收键盘事件
     canvas.style.outline = "none";
@@ -49,15 +51,82 @@ export default function App() {
     scene.add(ground);
 
     // 网格辅助（便于定位）
-    const grid =new THREE.GridHelper(120, 120, 0x444444, 0x888888);
+    const grid = new THREE.GridHelper(120, 120, 0x444444, 0x888888);
     grid.position.y = 0.01; // 避免Z-fighting
     scene.add(grid);
 
-    // 【替换】Day3起：NPC 改为从 /public/npcs.json 加载
+    // 防止热更新时旧标签残留
+    document.querySelectorAll(".npc-label").forEach((el) => el.remove());
+
+        // ===== NPC 占位柱 =====
+    const npcs = [];
+    // 多一个 savedByName 参数（可为 null）
+    function makeNPC(name, x, z, color, lines, savedByName) {
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.4, 0.4, 1.2, 24),
+        new THREE.MeshLambertMaterial({ color })
+      );
+
+      // 如果有保存的坐标，用保存的；否则用默认
+      const saved = savedByName?.[name];
+      mesh.position.set(saved ? saved.x : x, 0.6, saved ? saved.z : z);
+      mesh.userData.npc = name;
+      scene.add(mesh);
+
+      // 创建悬浮标签（名字+台词）
+      const label = document.createElement("div");
+      label.className = "npc-label";
+      label.innerHTML = `<div class="npc-name">${name}</div><div class="npc-line"></div>`;
+      document.body.appendChild(label);
+
+      const data = { name, mesh, label, lines, lineIndex: 0 };
+      label.querySelector(".npc-line").textContent = lines[0] || "……";
+      npcs.push(data);
+      return data;
+
+      label.style.display = "none";
+    }
+
+    // Day3起：NPC 改为从 /public/npcs.json 加载
     let NPC_DATA = []; // 将在 loadNPCs() 里赋值
+    const STORAGE_KEY = "daguan:npcLayout";
+
+    function readSavedLayout() {
+      const savedRaw = localStorage.getItem(STORAGE_KEY);
+      if (!savedRaw) return { entries: null, reason: "empty" };
+      try {
+        const arr = JSON.parse(savedRaw);
+        if (!Array.isArray(arr)) throw new Error("not an array");
+        const byName = new Map();
+        arr.forEach((p) => {
+          if (p && typeof p.name === "string" && typeof p.x === "number" && typeof p.z === "number") {
+            byName.set(p.name, { name: p.name, x: p.x, z: p.z });
+          }
+        });
+        if (!byName.size) {
+          localStorage.removeItem(STORAGE_KEY);
+          return { entries: null, reason: "corrupt" };
+        }
+        return { entries: Array.from(byName.values()), reason: null };
+      } catch (err) {
+        console.warn("[layout] failed to parse saved layout", err);
+        localStorage.removeItem(STORAGE_KEY);
+        return { entries: null, reason: "corrupt" };
+      }
+    }
+
+    const savedLayout = readSavedLayout();
+    const savedByName = savedLayout.entries
+      ? savedLayout.entries.reduce((acc, p) => {
+          acc[p.name] = { x: p.x, z: p.z };
+          return acc;
+        }, {})
+      : null;
 
 
-    // 【添加】异步加载 NPC 数据并实例化
+
+
+    // 异步加载 NPC 数据并实例化
     async function loadNPCs() {
       // 1) 拉 JSON
       const url = `${import.meta.env.BASE_URL}npcs.json`;
@@ -65,11 +134,30 @@ export default function App() {
       if (!res.ok) throw new Error(`fetch ${url} failed: ${res.status}`);
       NPC_DATA = await res.json();
 
+    // ✅ 在这里读取本地保存的布局
+    const savedRaw = localStorage.getItem("daguan:npcLayout");
+    let savedByName = null;
+    try {
+      const arr = savedRaw ? JSON.parse(savedRaw) : null;
+      if (Array.isArray(arr)) {
+        savedByName = {};
+        arr.forEach((p) => {
+          if (p?.name && typeof p.x === "number" && typeof p.z === "number") {
+            savedByName[p.name] = { x: p.x, z: p.z };
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("[loadLayout] failed to parse", err);
+      savedByName = null;
+    }
+
       // 2) 用 JSON 创建 NPC
       NPC_DATA.forEach(({ name, pos, color, lines }) => {
         makeNPC(name, pos[0], pos[1], color, lines, savedByName);
        });
       }
+      // 拉取NPC；失败则兜底（避免白屏）
       loadNPCs().catch((e) => {
         console.error("[loadNPCs] failed", e);
         const fallback = [
@@ -81,6 +169,10 @@ export default function App() {
           makeNPC(name, pos[0], pos[1], color, lines, null)
         );
       });
+
+      loadNPCs().then(() => {
+        updateLabels();
+      }).catch(console.error);
 
       // 立柱
       const pole = new THREE.Mesh(
@@ -108,55 +200,13 @@ export default function App() {
       document.body.appendChild(markerLabel);
 
 
-    // ===== NPC 占位柱 =====
-    const npcs = [];
-    // 替换】多一个 savedByName 参数（可为 null）
-    function makeNPC(name, x, z, color, lines, savedByName) {
-      const mesh = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.4, 0.4, 1.2, 24),
-        new THREE.MeshLambertMaterial({ color })
-      );
-
-      // 如果有保存的坐标，用保存的；否则用默认
-      const saved = savedByName?.[name];
-      mesh.position.set(saved ? saved.x : x, 0.6, saved ? saved.z : z);
-      mesh.userData.npc = name;
-      scene.add(mesh);
-
-      // 创建悬浮标签（名字+台词）
-      const label = document.createElement("div");
-      label.className = "npc-label";
-      label.innerHTML = `<div class="npc-name">${name}</div><div class="npc-line"></div>`;
-      document.body.appendChild(label);
-
-      const data = { name, mesh, label, lines, lineIndex: 0 };
-      label.querySelector(".npc-line").textContent = lines[0] || "……";
-      npcs.push(data);
-      return data;
-    }
-
-
-    // 从 localStorage 读取保存的布局 （按 name 匹配）
-    const savedRaw = localStorage.getItem("daguan:npcLayout");
-    /** @type {Record<string,{x:number, z:number}>|null} */
-    let savedByName = null;
-    try{
-      const arr = savedRaw ? JSON.parse(savedRaw) : null;
-      if (Array.isArray(arr)) {
-        savedByName = {};
-        arr.forEach((p) => {
-          if (p.name && typeof p.x === "number" && typeof p.z === "number") {
-            savedByName[p.name] = { x: p.x, z: p.z };
-          }
-        });
-      }
-    } catch{}
-
 
     // ===== 标签位置投影（把3D位置转换为屏幕像素） =====
     const proj = new THREE.Vector3();
     function updateLabels() {
       const { width, height } = canvas.getBoundingClientRect();
+
+      // NPC标签
       npcs.forEach(({ mesh, label }) => {
         proj.copy(mesh.position);
         proj.y += 1.1; // 标签悬浮到柱子上方一点
@@ -167,7 +217,7 @@ export default function App() {
         // 在视野外时隐藏
         label.style.display = proj.z < 1 && proj.z > -1 ? "block" : "none";
       });
-      // 【新增】再更新路标标签
+      // 再更新路标标签
       if (marker) {
         const { width, height } = canvas.getBoundingClientRect();
         const v = new THREE.Vector3(marker.position.x, marker.position.y + 0.8, marker.position.z);
@@ -216,7 +266,7 @@ export default function App() {
       if (!hit) return null;
       return npcs.find((n) => n.mesh === hit.object) || null;
     }
-    // 【添加】检测是否点击到了路标
+    // 检测是否点击到了路标
     function pickMarker(e) {
       setMouse(e);
       raycaster.setFromCamera(mouseNDC, camera);
@@ -226,12 +276,12 @@ export default function App() {
 
 
     function onPointerDown(e) {
-      // 【新增】先判断是否点击到路标
+      // 先判断是否点击到路标
       if (pickMarker(e)) {
         stateRef.current.questStep++;
         const introLines = [
           "欢迎来到大观园。这里的一草一木都在等待你的安排。",
-          "你可以拖动三位 NPC，也可以按 WASD 漫游四处看看。",
+          "你可以拖动三位 NPC,也可以按 WASD 漫游四处看看。",
           "接下来，我会引导你走向第一处景观……（明日继续）"
         ];
         const idx = Math.min(stateRef.current.questStep - 1, introLines.length - 1);
@@ -244,7 +294,8 @@ export default function App() {
         toast("迎宾剧情 · 第 " + stateRef.current.questStep + " 步");
         return; // 阻止继续进入 NPC 拖拽逻辑
       }
-
+      
+      // 拾取 NPC 进入拖拽
       const n = pickNPC(e);
       if (!n) return;
       picked = n;
@@ -292,8 +343,7 @@ export default function App() {
       if (k === "s") keys.s = false;
       if (k === "d") keys.d = false;
     };
-    canvas.addEventListener("keydown", onKeyDown);
-    canvas.addEventListener("keyup", onKeyUp);
+   
     function applyWASD() {
       const dir = new THREE.Vector3();
       camera.getWorldDirection(dir);
@@ -315,6 +365,9 @@ export default function App() {
         controls.target.add(move); // 保持观察中心
       }
     }
+
+    canvas.addEventListener("keydown", onKeyDown);
+    canvas.addEventListener("keyup", onKeyUp);
 
     // ===== 保存布局 / 恢复 / 重置（localStorage) =====
     function saveLayout() {
@@ -349,11 +402,16 @@ export default function App() {
     }
 
     function resetLayout() {
-      NPC_DATA.forEach((d, i) => {
-        npcs[i].mesh.position.set(d.pos[0], 0.6, d.pos[1]);
+      // 用 NPC-DATA 的默认坐标按 name 匹配
+      const defaults = {};
+      NPC_DATA.forEach((d, i) => (defaults[d.name] = d.pos));
+      npcs.forEach((n) => {
+        const pos = defaults[n.name] || [0, 0];
+        n.mesh.position.set(pos[0], 0.6, pos[1]);
       });
       toast("已重置为默认布局");
     }
+
     actionsRef.current = { save: saveLayout, restore: restoreLayout, reset: resetLayout };
 
 
@@ -383,7 +441,7 @@ export default function App() {
     let raf;
     const loop = () => {
       controls.update();
-      applyWASD(); // 【添加】放在 render 之前
+      applyWASD(); // 放在 render 之前
       renderer.render(scene, camera);
       updateLabels();
       raf = requestAnimationFrame(loop);
@@ -407,14 +465,15 @@ export default function App() {
       canvas.parentNode?.removeChild(canvas);
       npcs.forEach(({ label }) => label.remove());
       toastEl.remove();
-      // 移除路标标签
       markerLabel.remove();
+      controls.dispose();
+      renderer.dispose();
     };
   }, []);
 
   return (
     <>
-       <div ref={mountRef} />
+      <div ref={mountRef} />
       <div className="ui-hint">
         鼠标拖动视角 · 滚轮缩放 · WASD 漫游 · 按住彩色柱子可拖动
       </div>
